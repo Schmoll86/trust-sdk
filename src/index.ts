@@ -40,7 +40,6 @@ export interface EvidenceSummary {
 
 /** Full trust lookup response from /v1/trust/:id */
 export interface TrustLookup {
-  success: boolean;
   subject_id: string;
   identifiers: Record<string, string>;
   trust_score: TrustScore;
@@ -310,6 +309,10 @@ export class TrustClient {
       },
       body: JSON.stringify(updates),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Update failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -321,6 +324,10 @@ export class TrustClient {
       method: "DELETE",
       headers: { "X-Agent-Secret": authSecret },
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Delete failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -408,6 +415,10 @@ export class TrustClient {
    */
   async verifyLightning(params: VerifyLightningParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/lightning", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Lightning verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -417,6 +428,10 @@ export class TrustClient {
    */
   async verifyEthereum(params: VerifyEthereumParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/ethereum", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Ethereum verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -426,6 +441,10 @@ export class TrustClient {
    */
   async verifySolana(params: VerifySolanaParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/solana", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Solana verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -436,6 +455,10 @@ export class TrustClient {
    */
   async verifyNostr(params: VerifyNostrParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/nostr", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Nostr verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -446,6 +469,10 @@ export class TrustClient {
    */
   async verifyDomain(params: VerifyDomainParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/domain", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Domain verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -455,6 +482,10 @@ export class TrustClient {
    */
   async verifyTwitter(params: VerifyTwitterParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/twitter", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Twitter verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -465,6 +496,10 @@ export class TrustClient {
    */
   async verifyENS(params: VerifyENSParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/ens", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `ENS verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -474,6 +509,10 @@ export class TrustClient {
    */
   async verifyEndpoint(params: VerifyEndpointParams): Promise<VerifyResponse> {
     const res = await this.postJson("/registry/verify/endpoint", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Endpoint verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -484,6 +523,10 @@ export class TrustClient {
    */
   async verifyGitHub(params: VerifyGitHubParams): Promise<VerifyResponse | VerifyGitHubRedirect> {
     const res = await this.postJson("/registry/verify/github", params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `GitHub verification failed (${res.status})`);
+    }
     return res.json();
   }
 
@@ -545,7 +588,7 @@ export class TrustClient {
       const result = settled[i];
       results[chain] = result.status === "fulfilled"
         ? result.value
-        : { error: (result.reason as Error).message };
+        : { error: result.reason instanceof Error ? result.reason.message : String(result.reason) };
     }
 
     return results;
