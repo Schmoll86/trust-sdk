@@ -1,7 +1,7 @@
 {
   "name": "@trustthenverify/sdk",
-  "version": "2.0.0",
-  "description": "TypeScript SDK for the Trust Then Verify agent registry",
+  "version": "3.0.0",
+  "description": "TypeScript SDK for the Trust Then Verify agent trust protocol — verification, search, evidence, reviews",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

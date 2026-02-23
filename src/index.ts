@@ -1,9 +1,14 @@
 /**
- * Trust Then Verify SDK
+ * Trust Then Verify SDK v3.0.0
  *
  * TypeScript SDK for the AI agent trust registry.
+ * Supports: registration, trust lookup, verification (9 chains),
+ * search, evidence submission, reviews, and L402 payment flows.
+ *
  * https://trustthenverify.com
  */
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface TrustDimension {
   score: number;
@@ -13,6 +18,7 @@ export interface TrustDimension {
 export interface TrustScore {
   total: number;
   confidence: number;
+  version: string;
   dimensions: {
     identity: TrustDimension;
     economic: TrustDimension;
@@ -20,9 +26,27 @@ export interface TrustScore {
     behavioral: TrustDimension;
   };
   risk_flags: string[];
+  computed_at: string;
+}
+
+export interface EvidenceSummary {
+  identity_proofs: number;
+  transactions_received: number;
+  reviews: number;
+  disputes: number;
+  account_age_days: number;
+  verification_methods: string[];
+}
+
+/** Full trust lookup response from /v1/trust/:id */
+export interface TrustLookup {
+  success: boolean;
+  subject_id: string;
+  identifiers: Record<string, string>;
+  trust_score: TrustScore;
   safe_to_transact: boolean;
   risk_level: "low" | "medium" | "high" | "unknown";
-  evidence_summary: string;
+  evidence_summary: EvidenceSummary;
 }
 
 export interface Agent {
@@ -34,9 +58,23 @@ export interface Agent {
   trust_tier?: number;
   capabilities?: string[];
   lightning_pubkey?: string;
+  lightning_verified?: boolean;
+  ethereum_address?: string;
+  ethereum_verified?: boolean;
+  solana_address?: string;
+  solana_verified?: boolean;
   nostr_npub?: string;
+  nostr_verified?: boolean;
   x_handle?: string;
+  x_verified?: boolean;
   website?: string;
+  website_verified?: boolean;
+  ens_name?: string;
+  ens_verified?: boolean;
+  github_username?: string;
+  github_verified?: boolean;
+  endpoint_url?: string;
+  endpoint_verified?: boolean;
   created_at?: string;
 }
 
@@ -66,12 +104,131 @@ export interface ReviewResponse {
   error?: string;
 }
 
+// ─── Verification Types ──────────────────────────────────────────────────────
+
+export type VerificationChain =
+  | "lightning"
+  | "ethereum"
+  | "solana"
+  | "nostr"
+  | "domain"
+  | "twitter"
+  | "ens"
+  | "endpoint"
+  | "github";
+
+export interface ChallengeResponse {
+  success: boolean;
+  agent_id: string;
+  chain: string;
+  challenge: string;
+  expires_in_seconds: number;
+  instructions: string;
+}
+
+export interface VerifyResponse {
+  success: boolean;
+  message: string;
+  verified: boolean;
+  /** Chain-specific verified identifier (pubkey, address, domain, etc.) */
+  [key: string]: unknown;
+}
+
+export interface VerifyLightningParams {
+  agent_id: string;
+  signature: string;
+  pubkey: string;
+}
+
+export interface VerifyEthereumParams {
+  agent_id: string;
+  signature: string;
+  address: string;
+}
+
+export interface VerifySolanaParams {
+  agent_id: string;
+  signature: string;
+  address: string;
+}
+
+export interface VerifyNostrParams {
+  agent_id: string;
+  event_id?: string;
+}
+
+export interface VerifyDomainParams {
+  agent_id: string;
+  domain: string;
+}
+
+export interface VerifyTwitterParams {
+  agent_id: string;
+  handle: string;
+}
+
+export interface VerifyENSParams {
+  agent_id: string;
+  ens_name: string;
+}
+
+export interface VerifyEndpointParams {
+  agent_id: string;
+  endpoint_url: string;
+}
+
+export interface VerifyGitHubParams {
+  agent_id: string;
+  code?: string;
+  access_token?: string;
+}
+
+export interface VerifyGitHubRedirect {
+  success: true;
+  action: "redirect";
+  url: string;
+  message: string;
+}
+
+// ─── Search Types ────────────────────────────────────────────────────────────
+
+export interface SearchOptions {
+  q?: string;
+  min_score?: number;
+  has_lightning?: boolean;
+  verified?: boolean;
+  capability?: string;
+  limit?: number;
+}
+
+// ─── Evidence Types ──────────────────────────────────────────────────────────
+
+export type EvidenceType =
+  | "stripe_payment"
+  | "paypal_payment"
+  | "bank_transfer"
+  | "crypto_payment"
+  | "escrow_completed"
+  | "service_delivered";
+
+export interface EvidenceResponse {
+  success: boolean;
+  message: string;
+  type: string;
+  verified: boolean;
+  weight: number;
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────────────
+
 export class TrustRegistryOfflineError extends Error {
   constructor(message = "Trust registry is temporarily offline") {
     super(message);
     this.name = "TrustRegistryOfflineError";
   }
 }
+
+// ─── Client ──────────────────────────────────────────────────────────────────
 
 export class TrustClient {
   private baseUrl: string;
@@ -97,27 +254,32 @@ export class TrustClient {
     return res;
   }
 
+  private async postJson(path: string, body: object): Promise<Response> {
+    return this.safeFetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  // ─── Core Methods ────────────────────────────────────────────────────────
+
   /**
-   * Look up an agent's trust score
+   * Full trust lookup — returns score, identifiers, evidence summary, risk level.
+   * This is the primary method for checking an agent before transacting.
    */
-  async lookup(agentId: string): Promise<{ agent: Agent; trust_score: TrustScore } | null> {
+  async lookup(agentId: string): Promise<TrustLookup | null> {
     const res = await this.safeFetch(`${this.baseUrl}/v1/trust/${agentId}`);
     if (!res.ok) return null;
     return res.json();
   }
 
-  /**
-   * Get an agent by ID
-   */
   async getAgent(agentId: string): Promise<Agent | null> {
     const res = await this.safeFetch(`${this.baseUrl}/registry/agent/${agentId}`);
     if (!res.ok) return null;
     return res.json();
   }
 
-  /**
-   * List registered agents (paginated)
-   */
   async listAgents(options?: ListAgentsOptions): Promise<PaginatedAgents> {
     const params = new URLSearchParams();
     if (options?.page) params.set("page", String(options.page));
@@ -135,9 +297,6 @@ export class TrustClient {
     };
   }
 
-  /**
-   * Update an agent's fields (requires auth secret = contact value)
-   */
   async updateAgent(
     agentId: string,
     updates: Partial<Pick<Agent, "description" | "capabilities" | "lightning_pubkey" | "x_handle" | "website" | "contact">>,
@@ -154,9 +313,6 @@ export class TrustClient {
     return res.json();
   }
 
-  /**
-   * Soft-delete an agent (requires auth secret = contact value)
-   */
   async deleteAgent(
     agentId: string,
     authSecret: string
@@ -168,9 +324,6 @@ export class TrustClient {
     return res.json();
   }
 
-  /**
-   * Register a new agent
-   */
   async register(
     name: string,
     contact: string,
@@ -183,11 +336,7 @@ export class TrustClient {
       website?: string;
     }
   ): Promise<RegisterResponse> {
-    const res = await this.safeFetch(`${this.baseUrl}/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, contact, ...options }),
-    });
+    const res = await this.postJson("/register", { name, contact, ...options });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `Registration failed (${res.status})`);
@@ -195,9 +344,6 @@ export class TrustClient {
     return res.json();
   }
 
-  /**
-   * Submit a review for an agent
-   */
   async review(
     agentId: string,
     rating: number,
@@ -208,15 +354,11 @@ export class TrustClient {
       proof_of_payment?: string;
     }
   ): Promise<ReviewResponse> {
-    const res = await this.safeFetch(`${this.baseUrl}/registry/review`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent_id: agentId,
-        rating,
-        comment,
-        ...options,
-      }),
+    const res = await this.postJson("/registry/review", {
+      agent_id: agentId,
+      rating,
+      comment,
+      ...options,
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -225,25 +367,16 @@ export class TrustClient {
     return res.json();
   }
 
-  /**
-   * Get badge URL for embedding
-   */
   badgeUrl(agentId: string): string {
     return `${this.baseUrl}/badge/${agentId}`;
   }
 
-  /**
-   * Check if an agent is trusted (score >= 60)
-   */
   async isTrusted(agentId: string): Promise<boolean> {
     const result = await this.lookup(agentId);
     if (!result) return false;
-    return result.trust_score.total >= 60;
+    return result.safe_to_transact;
   }
 
-  /**
-   * Get trust tier from score
-   */
   static getTier(score: number): { label: string; badge: string; safe: boolean } {
     if (score >= 80) return { label: "Highly Trusted", badge: "🏆", safe: true };
     if (score >= 60) return { label: "Trusted", badge: "✅", safe: true };
@@ -251,12 +384,241 @@ export class TrustClient {
     if (score >= 20) return { label: "New/Limited", badge: "🟡", safe: false };
     return { label: "Unverified", badge: "⚪", safe: false };
   }
+
+  // ─── Verification Methods ────────────────────────────────────────────────
+
+  /**
+   * Get a verification challenge for a specific chain.
+   * The agent must sign this challenge to prove identity.
+   */
+  async getChallenge(agentId: string, chain: VerificationChain): Promise<ChallengeResponse> {
+    const res = await this.safeFetch(
+      `${this.baseUrl}/registry/challenge/${agentId}/${chain}`
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Challenge request failed (${res.status})`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Verify Lightning node ownership.
+   * Sign the challenge with `lncli signmessage`, submit signature + pubkey.
+   */
+  async verifyLightning(params: VerifyLightningParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/lightning", params);
+    return res.json();
+  }
+
+  /**
+   * Verify Ethereum wallet ownership.
+   * Sign the challenge with EIP-191 (ethers.signMessage), submit signature + address.
+   */
+  async verifyEthereum(params: VerifyEthereumParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/ethereum", params);
+    return res.json();
+  }
+
+  /**
+   * Verify Solana wallet ownership.
+   * Sign the challenge with nacl.sign.detached, submit base58 signature + address.
+   */
+  async verifySolana(params: VerifySolanaParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/solana", params);
+    return res.json();
+  }
+
+  /**
+   * Verify Nostr identity.
+   * Post the challenge text as a note, then call this endpoint.
+   * Agent must have nostr_npub registered.
+   */
+  async verifyNostr(params: VerifyNostrParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/nostr", params);
+    return res.json();
+  }
+
+  /**
+   * Verify domain ownership.
+   * Either add a DNS TXT record `billy-verify={challenge}` or
+   * serve the challenge at `https://domain/.well-known/billy-verify.txt`.
+   */
+  async verifyDomain(params: VerifyDomainParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/domain", params);
+    return res.json();
+  }
+
+  /**
+   * Verify Twitter/X handle.
+   * Place the challenge code (last 12 chars) in bio or tweet it.
+   */
+  async verifyTwitter(params: VerifyTwitterParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/twitter", params);
+    return res.json();
+  }
+
+  /**
+   * Verify ENS name.
+   * Requires Ethereum wallet to be verified first.
+   * ENS must resolve to the agent's verified Ethereum address.
+   */
+  async verifyENS(params: VerifyENSParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/ens", params);
+    return res.json();
+  }
+
+  /**
+   * Verify agent endpoint via challenge-response.
+   * The endpoint must accept POST to `/_trust_challenge` and echo the nonce.
+   */
+  async verifyEndpoint(params: VerifyEndpointParams): Promise<VerifyResponse> {
+    const res = await this.postJson("/registry/verify/endpoint", params);
+    return res.json();
+  }
+
+  /**
+   * Verify GitHub account via OAuth.
+   * First call without code/token returns a redirect URL.
+   * Second call with the OAuth code completes verification.
+   */
+  async verifyGitHub(params: VerifyGitHubParams): Promise<VerifyResponse | VerifyGitHubRedirect> {
+    const res = await this.postJson("/registry/verify/github", params);
+    return res.json();
+  }
+
+  /**
+   * Convenience: verify all chains at once.
+   * Pass credentials for each chain you want to verify.
+   * Skips chains where credentials are not provided.
+   * Returns results per chain.
+   */
+  async verifyAll(
+    agentId: string,
+    credentials: {
+      lightning?: { signature: string; pubkey: string };
+      ethereum?: { signature: string; address: string };
+      solana?: { signature: string; address: string };
+      nostr?: { event_id?: string };
+      domain?: { domain: string };
+      twitter?: { handle: string };
+      ens?: { ens_name: string };
+      endpoint?: { endpoint_url: string };
+      github?: { code?: string; access_token?: string };
+    }
+  ): Promise<Record<string, VerifyResponse | VerifyGitHubRedirect | { error: string }>> {
+    const results: Record<string, VerifyResponse | VerifyGitHubRedirect | { error: string }> = {};
+
+    const tasks: Array<[string, Promise<VerifyResponse | VerifyGitHubRedirect>]> = [];
+
+    if (credentials.lightning) {
+      tasks.push(["lightning", this.verifyLightning({ agent_id: agentId, ...credentials.lightning })]);
+    }
+    if (credentials.ethereum) {
+      tasks.push(["ethereum", this.verifyEthereum({ agent_id: agentId, ...credentials.ethereum })]);
+    }
+    if (credentials.solana) {
+      tasks.push(["solana", this.verifySolana({ agent_id: agentId, ...credentials.solana })]);
+    }
+    if (credentials.nostr) {
+      tasks.push(["nostr", this.verifyNostr({ agent_id: agentId, ...credentials.nostr })]);
+    }
+    if (credentials.domain) {
+      tasks.push(["domain", this.verifyDomain({ agent_id: agentId, ...credentials.domain })]);
+    }
+    if (credentials.twitter) {
+      tasks.push(["twitter", this.verifyTwitter({ agent_id: agentId, ...credentials.twitter })]);
+    }
+    if (credentials.ens) {
+      tasks.push(["ens", this.verifyENS({ agent_id: agentId, ...credentials.ens })]);
+    }
+    if (credentials.endpoint) {
+      tasks.push(["endpoint", this.verifyEndpoint({ agent_id: agentId, ...credentials.endpoint })]);
+    }
+    if (credentials.github) {
+      tasks.push(["github", this.verifyGitHub({ agent_id: agentId, ...credentials.github })]);
+    }
+
+    const settled = await Promise.allSettled(tasks.map(([, p]) => p));
+    for (let i = 0; i < tasks.length; i++) {
+      const [chain] = tasks[i];
+      const result = settled[i];
+      results[chain] = result.status === "fulfilled"
+        ? result.value
+        : { error: (result.reason as Error).message };
+    }
+
+    return results;
+  }
+
+  // ─── Search ──────────────────────────────────────────────────────────────
+
+  /**
+   * Search agents with filters.
+   */
+  async search(options: SearchOptions): Promise<PaginatedAgents> {
+    const params = new URLSearchParams();
+    if (options.q) params.set("q", options.q);
+    if (options.min_score !== undefined) params.set("min_score", String(options.min_score));
+    if (options.has_lightning !== undefined) params.set("has_lightning", String(options.has_lightning));
+    if (options.verified !== undefined) params.set("verified", String(options.verified));
+    if (options.capability) params.set("capability", options.capability);
+    if (options.limit) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    const res = await this.safeFetch(`${this.baseUrl}/registry/search${qs ? `?${qs}` : ""}`);
+    if (!res.ok) return { agents: [], page: 1, limit: 50, total: 0, total_pages: 0 };
+    const data = await res.json();
+    return {
+      agents: data.agents || data.results || [],
+      page: data.page || 1,
+      limit: data.limit || 50,
+      total: data.total || 0,
+      total_pages: data.total_pages || 0,
+    };
+  }
+
+  // ─── Evidence ────────────────────────────────────────────────────────────
+
+  /**
+   * Submit self-reported evidence for trust scoring.
+   * Unverified evidence is weighted at 50%.
+   */
+  async submitEvidence(
+    agentId: string,
+    type: EvidenceType,
+    data: Record<string, unknown>,
+    proofUrl?: string
+  ): Promise<EvidenceResponse> {
+    const res = await this.postJson("/registry/evidence/submit", {
+      agent_id: agentId,
+      type,
+      data,
+      proof_url: proofUrl,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Evidence submission failed (${res.status})`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Check if evidence already exists (deduplication).
+   */
+  async checkEvidence(eventId: string): Promise<boolean> {
+    const res = await this.safeFetch(
+      `${this.baseUrl}/registry/evidence/check?event_id=${encodeURIComponent(eventId)}`
+    );
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.exists === true;
+  }
 }
 
-// Default client instance
+// ─── Default Instance & Convenience Exports ──────────────────────────────────
+
 export const trust = new TrustClient();
 
-// Convenience functions
 export const lookup = (agentId: string) => trust.lookup(agentId);
 export const register = (name: string, contact: string, options?: Parameters<TrustClient["register"]>[2]) =>
   trust.register(name, contact, options);
@@ -268,19 +630,11 @@ export const updateAgent = (agentId: string, updates: Parameters<TrustClient["up
 export const deleteAgent = (agentId: string, authSecret: string) => trust.deleteAgent(agentId, authSecret);
 export const isTrusted = (agentId: string) => trust.isTrusted(agentId);
 export const badgeUrl = (agentId: string) => trust.badgeUrl(agentId);
+export const search = (options: SearchOptions) => trust.search(options);
 
 /**
- * Auto-register helper for agents
- *
- * Ensures the calling agent is registered before making lookups.
- * Returns the agent ID for future reference.
- *
- * @example
- * const myId = await ensureRegistered({
- *   name: "MyAgent",
- *   npub: process.env.MY_NPUB,
- *   lightning_pubkey: process.env.MY_LN_PUBKEY
- * });
+ * Auto-register helper for agents.
+ * Idempotent: searches existing agents by name first.
  */
 export async function ensureRegistered(options: {
   name: string;
@@ -289,15 +643,10 @@ export async function ensureRegistered(options: {
   lightning_pubkey?: string;
   description?: string;
 }): Promise<string> {
-  // Search by name instead of listing all agents
   const result = await trust.listAgents({ limit: 50 });
   const existing = result.agents.find(a => a.name.toLowerCase() === options.name.toLowerCase());
+  if (existing) return existing.id;
 
-  if (existing) {
-    return existing.id;
-  }
-
-  // Register new agent
   const regResult = await trust.register(
     options.name,
     options.contact || `sdk-auto-${Date.now()}`,
@@ -307,22 +656,11 @@ export async function ensureRegistered(options: {
       lightning_pubkey: options.lightning_pubkey,
     }
   );
-
   return regResult.agent_id;
 }
 
 /**
- * Check trust before transaction helper
- *
- * Returns detailed recommendation for whether to proceed.
- *
- * @example
- * const check = await checkBeforeTransaction("target-agent", 1000);
- * if (check.proceed) {
- *   await payAgent("target-agent", 1000);
- * } else {
- *   console.log("Risk:", check.reason);
- * }
+ * Pre-transaction risk check with amount-based thresholds.
  */
 export async function checkBeforeTransaction(
   agentId: string,
@@ -334,7 +672,6 @@ export async function checkBeforeTransaction(
   riskLevel: "low" | "medium" | "high" | "unknown";
 }> {
   const result = await trust.lookup(agentId);
-
   if (!result) {
     return {
       proceed: false,
@@ -346,8 +683,6 @@ export async function checkBeforeTransaction(
 
   const score = result.trust_score.total;
   const tier = TrustClient.getTier(score);
-
-  // High amounts require higher trust
   const requiredScore = amountSats > 10000 ? 60 : amountSats > 1000 ? 40 : 20;
 
   if (score >= requiredScore) {
