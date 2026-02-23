@@ -20,7 +20,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/trustthenverify/trust-sdk"
+    "url": "https://github.com/Schmoll86/trust-sdk"
   },
   "homepage": "https://trustthenverify.com",
   "devDependencies": {

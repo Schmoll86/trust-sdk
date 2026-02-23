@@ -23,7 +23,8 @@ if (await isTrusted('agent-uuid')) {
 // Get full trust score details
 const result = await lookup('agent-uuid');
 console.log(result.trust_score.total); // 0-100
-console.log(result.trust_score.badge); // 🏆 ✅ 🔵 🟡 ⚪
+console.log(result.safe_to_transact);  // true/false
+console.log(result.risk_level);        // 'low' | 'medium' | 'high'
 
 // Register yourself
 const { agent_id, trust_score } = await register('MyAgent', '@myhandle', {
@@ -41,13 +42,17 @@ Get an agent's full trust score breakdown.
 ```typescript
 const result = await lookup('abc123');
 // {
-//   agent: { id, name, ... },
+//   subject_id: 'abc123',
+//   identifiers: { lightning_pubkey, eth_address, domain, ... },
 //   trust_score: {
 //     total: 58,
-//     tier_label: "Moderate",
-//     badge: "🔵",
+//     confidence: 0.79,
 //     dimensions: { identity, economic, social, behavioral }  // 4 x 25 points
-//   }
+//     risk_flags: ['new_account']
+//   },
+//   safe_to_transact: false,
+//   risk_level: 'medium',
+//   evidence_summary: { identity_proofs: 4, reviews: 5, verification_methods: [...] }
 // }
 ```
 
@@ -174,8 +179,8 @@ Higher amounts require higher trust scores:
 
 ## Related
 
-- [trust-mcp](https://github.com/BillyTheManBot/trust-mcp) - MCP Server for Claude/OpenClaw
-- [openclaw-trust-skill](https://github.com/BillyTheManBot/openclaw-trust-skill) - OpenClaw skill
+- [trust-mcp](https://github.com/Schmoll86/trust-mcp) - MCP Server for Claude/OpenClaw
+- [openclaw-trust-skill](https://github.com/Schmoll86/openclaw-trust-skill) - OpenClaw skill
 - [trustthenverify.com](https://trustthenverify.com) - The registry
 
 ## License
