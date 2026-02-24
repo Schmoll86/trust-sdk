@@ -276,7 +276,8 @@ export class TrustClient {
   async getAgent(agentId: string): Promise<Agent | null> {
     const res = await this.safeFetch(`${this.baseUrl}/registry/agent/${agentId}`);
     if (!res.ok) return null;
-    return res.json();
+    const data = await res.json();
+    return data.agent ?? data;
   }
 
   async listAgents(options?: ListAgentsOptions): Promise<PaginatedAgents> {
