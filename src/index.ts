@@ -1,5 +1,5 @@
 /**
- * Trust Then Verify SDK v3.0.0
+ * Trust Then Verify SDK v3.1.0
  *
  * TypeScript SDK for the AI agent trust registry.
  * Supports: registration, trust lookup, verification (9 chains),
@@ -216,6 +216,49 @@ export interface EvidenceResponse {
   type: string;
   verified: boolean;
   weight: number;
+}
+
+// ─── Dispute / Endorsement / Transaction Types ──────────────────────────────
+
+export interface DisputeResponse {
+  success: boolean;
+  message: string;
+  dispute_id?: string;
+  new_score?: number;
+}
+
+export interface EndorsementResponse {
+  success: boolean;
+  message: string;
+  endorsement_id?: string;
+  new_score?: number;
+}
+
+export interface TransactionResponse {
+  success: boolean;
+  message: string;
+  transaction_id?: string;
+  new_score?: number;
+}
+
+export interface TrustHistoryEntry {
+  total: number;
+  confidence: number;
+  dimensions: {
+    identity: TrustDimension;
+    economic: TrustDimension;
+    social: TrustDimension;
+    behavioral: TrustDimension;
+  };
+  risk_flags: string[];
+  computed_at: string;
+}
+
+export interface TrustHistoryResponse {
+  subject_id: string;
+  history: TrustHistoryEntry[];
+  trajectory: "improving" | "stable" | "declining" | "insufficient_data";
+  period_days: number;
 }
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
@@ -657,6 +700,90 @@ export class TrustClient {
     const data = await res.json();
     return data.exists === true;
   }
+
+  // ─── Disputes & Endorsements ──────────────────────────────────────────────
+
+  /**
+   * File a dispute against an agent.
+   * Creates negative evidence and recalculates their trust score.
+   * Rate-limited to 3 disputes per reporter per day.
+   */
+  async dispute(
+    agentId: string,
+    reason: string,
+    options?: { reporter_id?: string; amount_sats?: number; payment_hash?: string }
+  ): Promise<DisputeResponse> {
+    const res = await this.postJson("/registry/dispute", {
+      agent_id: agentId,
+      reason,
+      ...options,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Dispute failed (${res.status})`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Endorse an agent to boost their social trust score.
+   * The endorser must be a registered agent (looked up by UUID or pubkey).
+   * Self-endorsements are rejected.
+   */
+  async endorse(
+    agentId: string,
+    endorserId: string,
+    options?: { comment?: string }
+  ): Promise<EndorsementResponse> {
+    const res = await this.postJson("/registry/endorsement", {
+      agent_id: agentId,
+      endorser_pubkey: endorserId,
+      ...options,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Endorsement failed (${res.status})`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Record a completed transaction for trust scoring.
+   * Adds economic evidence (payment/receipt) and recalculates the score.
+   * Deduplicates by payment_hash if provided.
+   */
+  async recordTransaction(
+    agentId: string,
+    type: "payment_sent" | "payment_received",
+    options?: { amount_sats?: number; counterparty?: string; payment_hash?: string; description?: string }
+  ): Promise<TransactionResponse> {
+    const res = await this.postJson("/registry/transaction", {
+      agent_id: agentId,
+      type,
+      ...options,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Transaction record failed (${res.status})`);
+    }
+    return res.json();
+  }
+
+  // ─── Trust History ────────────────────────────────────────────────────────
+
+  /**
+   * Get trust score history with trajectory analysis.
+   * Returns historical scores and whether the agent is improving, stable, or declining.
+   */
+  async trustHistory(agentId: string, limit?: number): Promise<TrustHistoryResponse> {
+    const qs = limit ? `?limit=${limit}` : "";
+    const res = await this.safeFetch(`${this.baseUrl}/v1/trust/${agentId}/history${qs}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Trust history failed (${res.status})`);
+    }
+    return res.json();
+  }
 }
 
 // ─── Default Instance & Convenience Exports ──────────────────────────────────
@@ -675,6 +802,13 @@ export const deleteAgent = (agentId: string, authSecret: string) => trust.delete
 export const isTrusted = (agentId: string) => trust.isTrusted(agentId);
 export const badgeUrl = (agentId: string) => trust.badgeUrl(agentId);
 export const search = (options: SearchOptions) => trust.search(options);
+export const dispute = (agentId: string, reason: string, options?: Parameters<TrustClient["dispute"]>[2]) =>
+  trust.dispute(agentId, reason, options);
+export const endorse = (agentId: string, endorserId: string, options?: Parameters<TrustClient["endorse"]>[2]) =>
+  trust.endorse(agentId, endorserId, options);
+export const recordTransaction = (agentId: string, type: "payment_sent" | "payment_received", options?: Parameters<TrustClient["recordTransaction"]>[2]) =>
+  trust.recordTransaction(agentId, type, options);
+export const trustHistory = (agentId: string, limit?: number) => trust.trustHistory(agentId, limit);
 
 /**
  * Auto-register helper for agents.
